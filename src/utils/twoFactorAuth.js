@@ -1,51 +1,53 @@
-// src/utils/twoFactorAuth.js - Simple 2FA implementation
-import QRCode from 'qrcode';
+// src/utils/twoFactorAuth.js - Browser-safe 2FA implementation
+import qrcode from "qrcode-generator";
 
 export class TwoFactorAuth {
-  // Generate a simple secret (base32 string)
+  // Generate a simple 32-char base32 secret
   static generateSecret(email) {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-    let secret = '';
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let secret = "";
+
     for (let i = 0; i < 32; i++) {
       secret += chars.charAt(Math.floor(Math.random() * chars.length));
     }
-    
+
     return {
       base32: secret,
-      otpauth_url: `otpauth://totp/DocCollab:${encodeURIComponent(email)}?secret=${secret}&issuer=DocCollab`
+      otpauth_url: `otpauth://totp/DocCollab:${encodeURIComponent(
+        email
+      )}?secret=${secret}&issuer=DocCollab`,
     };
   }
 
-  // Generate QR code
+  // Generate a QR Code (Browser + Vercel compatible)
   static async generateQRCode(secret) {
     try {
-      return await QRCode.toDataURL(secret.otpauth_url);
+      const qr = qrcode(0, "L");
+      qr.addData(secret.otpauth_url);
+      qr.make();
+
+      // returns base64 PNG image
+      return qr.createDataURL();
     } catch (error) {
-      console.error('Error generating QR code:', error);
-      return '';
+      console.error("QR generation error:", error);
+      return "";
     }
   }
 
-  // Simple TOTP verification (for demo purposes)
+  // Simple demo verification (NOT real TOTP)
   static verifyToken(secret, token) {
-    // For demo, accept any 6-digit code that matches our simple algorithm
-    // In production, you'd use a proper TOTP implementation
     if (!token || token.length !== 6 || !/^\d+$/.test(token)) {
       return false;
     }
 
-    // Simple demo verification - in real app, use proper TOTP
-    // This is just for demonstration
-    const expectedCode = this.generateDemoCode(secret);
-    return token === expectedCode;
+    const expected = this.generateDemoCode(secret);
+    return token === expected;
   }
 
-  // Demo code generation (replace with proper TOTP in production)
+  // Simple rotating code — demo only
   static generateDemoCode(secret) {
-    // Simple demo - use first 6 chars of secret as "code"
-    // In production, use proper TOTP algorithm
-    const timestamp = Math.floor(Date.now() / 30000); // 30-second intervals
-    const code = String(timestamp * 12345 % 1000000).padStart(6, '0');
+    const time = Math.floor(Date.now() / 30000); // 30 sec window
+    const code = String((time * 12345) % 1000000).padStart(6, "0");
     return code;
   }
 
@@ -53,23 +55,16 @@ export class TwoFactorAuth {
   static generateBackupCodes(count = 8) {
     const codes = [];
     for (let i = 0; i < count; i++) {
-      // Generate 8-character backup codes
-      const code = Math.random().toString(36).substring(2, 10).toUpperCase();
-      codes.push(code);
+      codes.push(Math.random().toString(36).slice(2, 10).toUpperCase());
     }
     return codes;
   }
 
-  // Verify backup code
-  static verifyBackupCode(backupCodes, code) {
-    if (!backupCodes || !Array.isArray(backupCodes)) return false;
-    
-    const index = backupCodes.indexOf(code);
-    if (index > -1) {
-      // Remove used backup code
-      backupCodes.splice(index, 1);
-      return true;
-    }
-    return false;
+  // Verify and remove used backup code
+  static verifyBackupCode(list, code) {
+    const index = list.indexOf(code);
+    if (index === -1) return false;
+    list.splice(index, 1);
+    return true;
   }
 }

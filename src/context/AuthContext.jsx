@@ -1,159 +1,155 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import pb from '../utils/pocketbaseClient';
-import { TwoFactorAuth } from '../utils/twoFactorAuth';
+import React, { createContext, useContext, useEffect, useState } from "react";
+import pb from "../utils/pocketbaseClient";
+import { TwoFactorAuth } from "../utils/twoFactorAuth";
 
 const AuthContext = createContext();
-
 export function useAuth() {
   return useContext(AuthContext);
 }
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(pb.authStore.model);
   const [loading, setLoading] = useState(true);
   const [requires2FA, setRequires2FA] = useState(false);
   const [tempUser, setTempUser] = useState(null);
 
+  // Correct PocketBase listener
   useEffect(() => {
     setUser(pb.authStore.model);
     setLoading(false);
 
-    pb.authStore.onChange((auth) => {
+    const removeListener = pb.authStore.onChange(() => {
       setUser(pb.authStore.model);
       setLoading(false);
     });
+
+    return removeListener;
   }, []);
 
+  // Signup
   const signUp = async (email, password, username) => {
-    const data = {
-      email: email,
-      password: password,
-      passwordConfirm: password,
-      username: username,
-      twoFactorEnabled: false,
-      twoFactorSecret: '',
-      backupCodes: []
-    };
-
     try {
-      const userData = await pb.collection('users').create(data);
-      await pb.collection('users').authWithPassword(email, password);
+      const data = {
+        email,
+        password,
+        passwordConfirm: password,
+        username,
+        twoFactorEnabled: false,
+        twoFactorSecret: "",
+        backupCodes: [],
+      };
+
+      const userData = await pb.collection("users").create(data);
+      await pb.collection("users").authWithPassword(email, password);
       return { data: userData, error: null };
     } catch (error) {
-      return { data: null, error: error };
+      return { data: null, error };
     }
   };
 
-  const signIn = async (email, password, twoFactorToken = null) => {
+  // Login
+  const signIn = async (email, password, token = null) => {
     try {
-      const userData = await pb.collection('users').authWithPassword(email, password);
-      
-      // Check if 2FA is enabled
-      if (userData.record.twoFactorEnabled && !twoFactorToken) {
-        setTempUser(userData);
+      const result = await pb.collection("users").authWithPassword(email, password);
+      const userRecord = result.record;
+
+      if (userRecord.twoFactorEnabled && !token) {
+        setTempUser(result);
         setRequires2FA(true);
-        return { data: null, error: '2FA_REQUIRED' };
+        return { data: null, error: "2FA_REQUIRED" };
       }
 
-      // Verify 2FA token if provided
-      if (userData.record.twoFactorEnabled && twoFactorToken) {
-        const isValid = TwoFactorAuth.verifyToken(
-          userData.record.twoFactorSecret,
-          twoFactorToken
+      if (userRecord.twoFactorEnabled && token) {
+        const valid = TwoFactorAuth.verifyToken(
+          userRecord.twoFactorSecret,
+          token
         );
 
-        if (!isValid) {
-          // Check backup codes
-          const backupCodes = userData.record.backupCodes || [];
-          if (!TwoFactorAuth.verifyBackupCode(backupCodes, twoFactorToken)) {
-            await pb.authStore.clear();
-            return { data: null, error: 'Invalid 2FA code' };
-          } else {
-            // Update backup codes in database
-            await pb.collection('users').update(userData.record.id, {
-              backupCodes: backupCodes
-            });
+        if (!valid) {
+          const backup = userRecord.backupCodes || [];
+          const backupOK = TwoFactorAuth.verifyBackupCode(backup, token);
+
+          if (!backupOK) {
+            pb.authStore.clear();
+            return { data: null, error: "Invalid 2FA code" };
           }
+
+          // remove used backup code
+          await pb.collection("users").update(userRecord.id, {
+            backupCodes: backup,
+          });
         }
       }
 
       setRequires2FA(false);
       setTempUser(null);
-      return { data: userData, error: null };
-    } catch (error) {
-      return { data: null, error: error };
+      return { data: result, error: null };
+    } catch (err) {
+      return { data: null, error: err };
     }
   };
 
-  const signOut = async () => {
+  const signOut = () => {
     pb.authStore.clear();
     setRequires2FA(false);
     setTempUser(null);
   };
 
   const setup2FA = async () => {
-    if (!user) return null;
-
     try {
       const secret = TwoFactorAuth.generateSecret(user.email);
-      const qrCode = await TwoFactorAuth.generateQRCode(secret);
-      const backupCodes = TwoFactorAuth.generateBackupCodes();
+      const qr = await TwoFactorAuth.generateQRCode(secret);
+      const backup = TwoFactorAuth.generateBackupCodes();
 
-      // Store secret and backup codes temporarily
       return {
         secret: secret.base32,
-        qrCode,
-        backupCodes
+        qrCode: qr,
+        backupCodes: backup,
       };
-    } catch (error) {
-      console.error('Error setting up 2FA:', error);
+    } catch (err) {
+      console.log("2FA setup error:", err);
       return null;
     }
   };
 
-  const enable2FA = async (token, backupCodes) => {
-    if (!user) return false;
-
+  const enable2FA = async (secret, backupCodes) => {
     try {
-      await pb.collection('users').update(user.id, {
+      await pb.collection("users").update(user.id, {
         twoFactorEnabled: true,
-        twoFactorSecret: token,
-        backupCodes: backupCodes
+        twoFactorSecret: secret,
+        backupCodes,
       });
       return true;
-    } catch (error) {
-      console.error('Error enabling 2FA:', error);
+    } catch {
       return false;
     }
   };
 
   const disable2FA = async () => {
-    if (!user) return false;
-
     try {
-      await pb.collection('users').update(user.id, {
+      await pb.collection("users").update(user.id, {
         twoFactorEnabled: false,
-        twoFactorSecret: '',
-        backupCodes: []
+        twoFactorSecret: "",
+        backupCodes: [],
       });
       return true;
-    } catch (error) {
-      console.error('Error disabling 2FA:', error);
+    } catch {
       return false;
     }
   };
 
   const value = {
     user,
+    loading,
+    requires2FA,
+    tempUser,
     signUp,
     signIn,
     signOut,
-    requires2FA,
-    tempUser,
-    setRequires2FA,
     setup2FA,
     enable2FA,
-    disable2FA
+    disable2FA,
+    setRequires2FA,
   };
 
   return (
