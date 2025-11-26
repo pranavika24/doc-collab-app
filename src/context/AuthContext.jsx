@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { pb } from '../utils/pocketbaseClient';
+import pb from '../utils/pocketbaseClient';
 import { TwoFactorAuth } from '../utils/twoFactorAuth';
 
 const AuthContext = createContext();
